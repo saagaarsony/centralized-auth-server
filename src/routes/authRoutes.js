@@ -1,23 +1,18 @@
 const express = require('express');
 const router = express.Router();
-const fs = require('fs');
-const path = require('path');
+const bcrypt = require('bcrypt');
 const db = require('../db/database');
+const userService = require('../utils/userService');
 const { generateAccessToken, generateRefreshToken, verifyRefreshToken, verifyAccessToken } = require('../utils/jwtUtils');
 
-// Helper to find user by email (Reads file dynamically to avoid caching)
-const findUser = (email) => {
-    const usersPath = path.resolve(__dirname, '../../users.json');
-    const usersData = JSON.parse(fs.readFileSync(usersPath, 'utf8'));
-    const cleanEmail = email.trim().toLowerCase();
-    return usersData.find(u => u.email.trim().toLowerCase() === cleanEmail);
-};
+// Helper to find user by email removed - using userService instead
+
 
 /**
  * POST /auth/login
  * Input: email, password
  */
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
     let { email, password } = req.body;
 
     if (!email || !password) {
@@ -28,41 +23,66 @@ router.post('/login', (req, res) => {
     password = password.trim();
 
     // 1. Validate User Credentials
-    const user = findUser(email);
-    if (!user || user.password.trim() !== password) {
-        return res.status(401).json({ message: 'Invalid credentials' });
-    }
+    try {
+        const user = await userService.fetchUserByEmail(email);
 
-    // 2. Generate Tokens
-    const accessToken = generateAccessToken(user);
-    const refreshToken = generateRefreshToken(user);
+        if (!user) {
+            return res.status(401).json({ message: 'Invalid credentials' });
+        }
 
-    // 3. Save Session to DB (module_name is now optional/null)
-    const stmt = db.prepare(`
+        // Compare password using bcrypt
+        console.log('--- Debug Password Match ---');
+        console.log('Email:', email);
+        console.log('Password length provided:', password ? password.length : 'null');
+        console.log('Hash from API:', user.password_hash);
+
+        const isMatch = await bcrypt.compare(password, user.password_hash);
+
+        console.log('Bcrypt comparison result:', isMatch);
+        console.log('---------------------------');
+
+        if (!isMatch) {
+            return res.status(401).json({ message: 'Invalid credentials' });
+        }
+
+        // 2. Generate Tokens
+        const accessToken = generateAccessToken(user);
+        const refreshToken = generateRefreshToken(user);
+
+        // 3. Save Session to DB
+        // Use module_name from request or default to 'NONE' if not provided
+        const moduleName = req.body.module_name || 'NONE';
+
+        const stmt = db.prepare(`
     INSERT INTO sessions (user_id, email, role, module_name, refresh_token, ip_address, user_agent)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
 
-    const ip = req.ip;
-    const userAgent = req.headers['user-agent'];
+        const ip = req.ip;
+        const userAgent = req.headers['user-agent'];
 
-    stmt.run(user.id, user.email, user.role, 'NONE', refreshToken, ip, userAgent, function (err) {
-        if (err) {
-            return res.status(500).json({ message: 'Error creating session', error: err.message });
-        }
-
-        // Return Tokens
-        res.json({
-            accessToken,
-            refreshToken,
-            user: {
-                id: user.id,
-                email: user.email,
-                role: user.role
+        stmt.run(user.id, user.email, user.role, moduleName, refreshToken, ip, userAgent, function (err) {
+            if (err) {
+                return res.status(500).json({ message: 'Error creating session', error: err.message });
             }
+
+            // Return Tokens
+            res.json({
+                accessToken,
+                refreshToken,
+                user: {
+                    id: user.id,
+                    email: user.email,
+                    role: user.role
+                }
+            });
         });
-    });
-    stmt.finalize();
+        stmt.finalize();
+    } catch (error) {
+        console.error('Login Error:', error.message);
+        const status = error.message === 'User Service Unavailable' ? 503 : 500;
+        res.status(status).json({ message: error.message });
+    }
 });
 
 /**
