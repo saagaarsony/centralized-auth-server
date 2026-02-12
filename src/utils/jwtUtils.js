@@ -10,12 +10,12 @@ const REFRESH_TOKEN_EXPIRY = '7d'; // Long-lived
 
 /**
  * Generates an Access Token
- * @param {object} user - User object containing id, email, role
+ * @param {object} user - User object containing id, email, roleId
  * @returns {string} - JWT Access Token
  */
 const generateAccessToken = (user) => {
     return jwt.sign(
-        { userId: user.id, email: user.email, role: user.role },
+        { userId: user.id || user.userId, email: user.email, roleId: user.roleId },
         ACCESS_TOKEN_SECRET,
         { expiresIn: ACCESS_TOKEN_EXPIRY }
     );
@@ -23,12 +23,13 @@ const generateAccessToken = (user) => {
 
 /**
  * Generates a Refresh Token
- * @param {object} user - User object containing id, email, role
+ * @param {object} user - User object containing id, email, roleId
  * @returns {string} - JWT Refresh Token
  */
+
 const generateRefreshToken = (user) => {
     return jwt.sign(
-        { userId: user.id, email: user.email, role: user.role },
+        { userId: user.id || user.userId, email: user.email, roleId: user.roleId },
         REFRESH_TOKEN_SECRET,
         { expiresIn: REFRESH_TOKEN_EXPIRY }
     );
